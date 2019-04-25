@@ -1,0 +1,83 @@
+cd $env:TEMP 
+
+$ex_8 = 'C:\Users\DCI Student\Documents\exercise_8'
+$break = "======================================================="
+
+$file_count = 0
+
+gci -Path $ex_8 -Recurse -Force -ErrorAction SilentlyContinue -Include *.zip, *.rar  | ForEach-Object { $file_count++ }
+Write-Host "Total zip and rar files count is: $file_count" -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+$stream_count = 0
+#$stream_name = New-Object 'System.Collections.Generic.List[System.Object]'
+gci -Path $ex_8 -Recurse -Force -ErrorAction SilentlyContinue | 
+    ForEach-Object { 
+        $dirname = $_.DirectoryName
+        if (Get-Item -Path $_.FullName -Stream *| Where-Object stream -NE ':$DATA' | Format-Table *) {
+            Write-Host "ADS filename is $_" -ForegroundColor Cyan
+            $sha1 = (Get-FileHash $_.FullName -Algorithm SHA1).Hash
+            $last_4_sha1 = $sha1.substring($sha1.length - 4, 4)
+            
+            Write-Host "Last 4 of SHA1 of $_ is  $last_4_sha1 " -ForegroundColor Cyan
+            
+            $stream_name = (Get-Item -Path $_.FullName -Stream *| Where-Object stream -NE ':$DATA')| Select-Object Stream
+            $ads_name = ($stream_name).Stream
+
+
+
+            Get-Content -Path $_.FullName -Stream ($stream_name).Stream | Out-File $ads_name
+            Write-Host "Writing ADS to files $ads_name" -ForegroundColor Cyan
+            Write-Host "File $ads_name in $dirname " -ForegroundColor Cyan
+           
+            #question 6 extract the rar file 
+            [IO.File]::WriteAllBytes('C:\Users\DCI Student\AppData\Local\Temp\test6.rar', (cat 'C:\Users\DCI Student\Documents\exercise_8\bqekifltpz\jodwsxfrti\ibdlcsoznj.txt:swogrxkcbh' -Encoding Byte))
+            #question 7 extract the zip file
+            [IO.File]::WriteAllBytes('C:\Users\DCI Student\AppData\Local\Temp\test7.zip', (cat 'C:\Users\DCI Student\Documents\exercise_8\sgtcpqbwzo\pqyuemditc.txt:teoycsrwul' -Encoding Byte))
+            Write-Host ""
+            $stream_count++
+        }
+        
+        
+    }
+Write-Host "Total ADS files count is: $stream_count" -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+$file_count = 0
+
+gci -Path $ex_8 -Recurse -Force -ErrorAction SilentlyContinue | 
+    ForEach-Object {
+        
+        if ((Check-Header -path $_.FullName) -and ($_.FullName -like "*.txt") ) { $file_count++ }
+    }
+
+Write-Host "Total text files that are zip/rar are : $file_count files " -ForegroundColor Green
+    
+#Check-Header -Path 'C:\Users\DCI Student\AppData\Local\Temp\test6.rar'
+function Check-Header
+{
+    param(
+        $Path
+        )
+    # Hexidecimal signatures for expected files
+    $rar = '5261';
+    $mz = '4D5A';
+    $zip = '504B';
+
+            
+       # Get content of each file (up to 4 bytes) for analysis
+       ([Byte[]] $fileheader = Get-Content -Path $Path -TotalCount 2 -Encoding Byte -ErrorAction SilentlyContinue) |
+       ForEach-Object {
+             if(("{0:X}" -f $_).length -eq 1)
+             {
+                   $HeaderAsHexString += "0{0:X}" -f $_
+             }
+             else
+             {
+                   $HeaderAsHexString += "{0:X}" -f $_
+             }
+       }
+      
+       # Validate file header
+       @($rar,$mz, $zip) -contains $HeaderAsHexString
+}

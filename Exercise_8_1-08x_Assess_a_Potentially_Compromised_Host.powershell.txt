@@ -1,0 +1,230 @@
+cd $env:TEMP
+$break = "================================================================================================="
+
+$StartTime = $(get-date)
+#Set-ExecutionPolicy -ExecutionPolicy Unrestricted
+Write-Host "Close all Active PSSession ..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+Get-PSSession | Remove-PSSession 
+
+
+
+#Get reg ioc name only from reg.txt
+Write-Host "Getting registry ioc name from given list..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+#APT2 IOC 
+$apt2_dns_ioc = @("ctable.org","ctable.com","nestlere.com","unina2.net")
+$apt2_file_ioc = @("msupdater.exe","ssdpsvc.dll", "msacem.dll", "mrpmsg.dll", "restore.dat", "index.dat")
+$apt2_reg_ioc = "McUpdate"
+$apt2_host_ioc = @("98.139.183.183 yahoo.com","11.76.174.166 ctable.com","123.125.114.144 baidu.com","84.246.78.212 gmw.cn","128.107.176.140 unina2.net")
+
+#APT26 IOC
+$apt26_dns_ioc = @("shwoo.gov","msa.hinet.net","news.rinpocheinfo.com")
+$apt26_file_ioc = @("AcroRd32Info.exe","igfxHK*.dat","igfxHK*.exe","news.rinpocheinfo.com","d.txt","127.0.0.1.txt","mim.exe","shell.gif","tests.jsp")
+$apt26_host_ioc = @("update.microsoft.com","dci.sophosupd.com","www.www.com","www.virustotal.com")
+
+#FIN4 IOC
+$fin4_dns_ioc = @("ellismikepage.info","lifehealthsanfrancisco2015.com","pgallerynow.info","dmforever.biz","msoutexchange.us","junomaat81.us","utlookscansafe.net","nickgoodsite.co.uk")
+$fin4_file_ioc = @("sys.txt","crashlog.dmp","tmp.bin","lsapass.exe")
+$fin4_user_ioc = @("BackupUser","Defau1tUser","BackupSupport")
+$fin4_schTask_ioc = @("mim","sekurlsa","AT","tmp")
+
+#EventID:
+$eventID = 4697,7045,1116,4738,4657
+
+#Scan for active host
+Write-Host "Getting active hosts..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+#initiate internal counter (trcount)
+$trcount = 0
+
+
+$targets = 9..11 | foreach {"172.16.12.$_"}
+$targint = $targets | measure
+$targint = $targint.Count
+$count=1
+
+#active host scan
+$active_host = New-Object 'System.Collections.Generic.List[System.Object]'
+$targets | foreach{
+    $percent=$count/$targint*100
+    Write-Progress -Activity "Scanning IP Range" -Status "Scanning $_" -PercentComplete $percent
+    $count ++
+    if(ping -n 1 -w 1 $_ | findstr Reply)
+        {
+        Write-Host "$_ is active" -ForegroundColor Cyan
+        $active_host.Add($_)
+        }
+    }
+
+
+#powershell remote management port
+Write-Host "Scanning for remote PS on active hosts..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+
+$active_ps_host = New-Object 'System.Collections.Generic.List[System.Object]'
+Enable-PSSessionConfiguration
+ 
+#ip of host machine
+$env:HostIP = (
+    Get-NetIPConfiguration |
+    Where-Object {
+        $_.IPv4DefaultGateway -ne $null -and
+        $_.NetAdapter.Status -ne "Disconnected"
+    }
+).IPv4Address.IPAddress
+
+ForEach ($ip in $active_host){
+    if ((Test-WSMan $ip -ErrorAction SilentlyContinue) -and ($ip -ne $env:HostIP) ) {
+        Set-Item WSMan:\localhost\Client\TrustedHosts $ip -Force -Concatenate
+        $active_ps_host.add($ip)       
+    }
+}
+#Active remote powershell
+Write-Host "Active remote PS hosts..." -ForegroundColor Green
+$active_ps_host
+Write-Host $break -ForegroundColor Green
+
+#
+#GRR website creds
+
+Write-Host "Install grr remotely ..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$grr_user = 'admin'
+$grr_pass = 'P@ssw0rd'
+
+$pair = "$($grr_user):$($grr_pass)"
+
+$encodedCreds = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
+
+$basicAuthValue = "Basic $encodedCreds"
+
+$Headers = @{
+    Authorization = $basicAuthValue
+}
+
+$session_count = 0
+
+#Start checking the remote hosts for ioc
+
+Write-Host "Start checking the remote hosts for ioc... " -ForegroundColor Green
+Write-Host $break
+
+#login to remote ip
+$PWord = ConvertTo-SecureString -AsPlainText -Force -String P@ssw0rd 
+$Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "administrator",$PWord 
+
+foreach ($ps_ip in $active_ps_host) {
+    $session = New-PSSession $ps_ip -ErrorAction SilentlyContinue -Credential $Credential
+    $session_count++
+}
+
+
+$invoke_count = 0
+
+#Important to have the variable below
+$session=Get-PSSession | Sort
+$single_break = "--------------------------------------------"
+
+while($invoke_count -lt $session_count) {
+
+	#get percentage in the process
+	$session_percent=$invoke_count/$session_count*100
+    Write-Progress -Activity "Processing data on" -Status $session[$invoke_count].ComputerName  -PercentComplete $session_percent 
+
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock { cd $env:TEMP; Invoke-WebRequest -Uri 'http://172.16.12.15:8000/api/config/binaries/EXECUTABLE/windows/installers/GRR_3.2.0.0_amd64.exe' -Headers $using:Headers -OutFile grr_install.exe; Start-Process -FilePath ".\grr_install.exe" }
+    # DNS record here
+    Write-Host ""
+    Write-Host "Scan for APT2 DNS record IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $apt2_dns_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {(Get-DnsClientCache).Name | ForEach-Object {if($_ -like "*$using:ioc*") {Write-Host "$_ IOC DNS found" -ForegroundColor Cyan}}}}
+
+    Write-Host ""
+    Write-Host "Scan for APT26 DNS record IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $apt26_dns_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {(Get-DnsClientCache).Name | ForEach-Object {if($_ -like "*$using:ioc*") {Write-Host "$_ IOC DNS found" -ForegroundColor Cyan}}}}
+
+    Write-Host ""
+    Write-Host "Scan for FIN4 DNS record IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $fin4_dns_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {(Get-DnsClientCache).Name | ForEach-Object {if($_ -like "*$using:ioc*") {Write-Host "$_ IOC DNS found" -ForegroundColor Cyan}}}}
+
+    # Files IOC here
+    Write-Host ""
+    Write-Host "Scan for APT2 files IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gci -Path "C:\" -Force -Include $using:apt2_file_ioc -Recurse -ErrorAction SilentlyContinue| ForEach-Object { Write-Host "$_" -ForegroundColor Cyan}}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gci -Path $env:TEMP -Force -Include "sethc.exe" -Recurse -ErrorAction SilentlyContinue| ForEach-Object { Write-Host "$_" -ForegroundColor Cyan}}
+
+
+    Write-Host ""
+    Write-Host "Scan for APT26 files IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gci -Path "C:\" -Force -Include $using:apt26_file_ioc -Recurse -ErrorAction SilentlyContinue | ForEach-Object {Write-Host "$_" -ForegroundColor Cyan}}
+
+    Write-Host ""
+    Write-Host "Scan for FIN4 files IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gci -Path "C:\" -Force -Include $using:fin4_file_ioc -Recurse -ErrorAction SilentlyContinue | ForEach-Object {Write-Host "$_" -ForegroundColor Cyan}}
+
+    # Host IOC here
+    Write-Host ""
+    Write-Host "Scan for APT2 hosts IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $apt2_host_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gc -Path "C:\Windows\System32\drivers\etc\hosts" -ErrorAction SilentlyContinue | foreach {if($_ -like "*$using:ioc*") {Write-Host "$_ found " -ForegroundColor Cyan }}}}
+    Write-Host ""
+    Write-Host "Scan for APT26 hosts IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $apt26_host_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gc -Path "C:\Windows\System32\drivers\etc\hosts" -ErrorAction SilentlyContinue | foreach {if($_ -like "*$using:ioc*") {Write-Host "$_ found " -ForegroundColor Cyan }}}}
+    
+    Write-Host "Scan for FIN4 hosts IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $fin4_dns_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {gc -Path "C:\Windows\System32\drivers\etc\hosts" -ErrorAction SilentlyContinue | foreach {if($_ -like "*$using:ioc*") {Write-Host "$_ found " -ForegroundColor Cyan }}}}
+
+
+    #Schedule task here
+
+    Write-Host ""
+    Write-Host "Scan for FIN4 Schedule Tasks IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $fin4_schTask_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {(Get-ScheduledTask).TaskName | ForEach-Object {if($_ -like $using:ioc){Write-Host "$_ found" -ForegroundColor Cyan}}}}
+
+    # Local users here
+    
+    Write-Host ""
+    Write-Host "Scan for FIN4 Users IOC:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $fin4_user_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {(Get-LocalUser).Name | ForEach-Object {if($_ -like "*$using:ioc*"){Write-Host "User $_ found" -ForegroundColor Cyan}}}}
+
+
+    # Register keys here
+    Write-Host ""
+    Write-Host "HKEY_CURRENT_USER registry Scan for APT2:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock { (Get-ItemProperty -Path Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run -Name $using:apt2_reg_ioc -ErrorAction SilentlyContinue | Format-Table *) }
+    
+    Write-Host ""
+    Write-Host "HKLM registry for APT2:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {  (Get-ItemProperty -Path Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run -Name $using:apt2_reg_ioc -ErrorAction SilentlyContinue | Format-Table *)}
+
+
+    Write-Host ""
+    Write-Host "Event ID look up on :" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+    foreach ($ioc in $eventID) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock { Get-EventLog -LogName Security | Where-Object {if ($_.EventID -eq $using:ioc) {"$_"} }}}
+    foreach ($ioc in $eventID) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock { Get-EventLog -LogName System | Where-Object {if ($_.EventID -eq $using:ioc) {"$_"} }}}
+    foreach ($ioc in $eventID) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock { Get-EventLog -LogName Application | Where-Object {if ($_.EventID -eq $using:ioc) {"$_"} }}}
+
+$invoke_count++
+}
+
+Write-Host "Total time to scan..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$elapsedTime = $(get-date) - $StartTime
+
+$totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)
+$totalTime

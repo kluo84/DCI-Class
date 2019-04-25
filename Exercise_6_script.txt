@@ -1,0 +1,165 @@
+$StartTime = $(get-date)
+#Set-ExecutionPolicy -ExecutionPolicy Unrestricted
+Write-Host "Close all Active PSSession ..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$session = Get-PSSession 
+foreach ($line in $session) {
+    Remove-PSSession $line
+}
+
+$break = "================================================================================================="
+#Get reg ioc name only from reg.txt
+Write-Host "Getting registry ioc name from given list..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$reg_ioc =  New-Object 'System.Collections.Generic.List[System.Object]'
+
+
+#Input this without quote C:\Users\DCI Student\Documents\RegIOC.txt
+foreach ($l in $(gc -Path $(Read-Host -Prompt "Enter your full path of Reg IOC text file: "))) {
+    if ($l.trim() -ne ""){
+        $w = $l.split("\\")[-1]
+        $reg_ioc.add($w.split('"')[1])
+    }
+}
+
+#Get file ioc name only from files.txt
+Write-Host "Getting ioc filename from given list..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$file_ioc =  New-Object 'System.Collections.Generic.List[System.Object]'
+
+#Input this without quote C:\Users\DCI Student\Documents\FileIOC.txt
+foreach ($l in $(gc -Path $(Read-Host -Prompt "Enter full path of your filename IOC text: "))) {
+   if ($l.trim() -ne ""){
+    $file_ioc.add($l.split("\\")[-1])
+   }
+}
+
+#Scan for active host
+Write-Host "Getting active hosts..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+$active_host = New-Object 'System.Collections.Generic.List[System.Object]'
+
+#temp ==>> need to delete later ==>> this for testing purpose
+#$hosts = @(20,56,83)
+
+#initiate internal counter (trcount)
+$trcount = 0
+
+
+$targets = 1..254 | foreach {"10.10.10.$_"}
+$targint = $targets | measure
+$targint = $targint.Count
+$count=1
+
+#Ping does not return a true/false case so I used "findstr Reply" to "grep" the results and return a boolean true/false.
+#if the if statement is true return the current $_ variable (this will be a full ip address)        
+#add the ip to $pingable
+
+$pingable = $targets | foreach{
+    $percent=$count/$targint*100
+    Write-Progress -Activity "Scanning IP Range" -Status "Scanning $_" -PercentComplete $percent
+    $count ++
+    if(ping -n 1 -w 1 $_ | findstr Reply)
+        {
+        Write-Host "$_ is ping-able"
+        $active_host.add($_)
+        }
+    }
+
+
+#powershell remote management port
+Write-Host "Scanning for opening ports on active hosts..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+$ports = 5985
+
+$active_ps_host = New-Object 'System.Collections.Generic.List[System.Object]'
+
+ForEach ($ip in $active_host){
+    ForEach ($port in $ports) {
+    #checking for open port
+    $Socket = New-Object System.Net.Sockets.TcpClient
+    
+    # Error message
+    $ErrorActionPreference = 'SilentlyContinue'
+    
+    # Try to connect
+    $tcp_connection = $Socket.ConnectAsync($ip, $port)
+
+    # Make error messages visible again
+    $ErrorActionPreference = 'Continue'
+
+    # Determine if we are connected.
+    if ($tcp_connection) {
+        #"${ip}: Port $port is open"
+        $active_ps_host.add($ip)
+
+        #Set trusted hosts in WSman with concatenate option
+        Set-Item WSMan:\localhost\Client\TrustedHosts $ip -Force -Concatenate
+        $Socket.Close()
+    }
+    
+    $Socket.Dispose()
+    $Socket = $null    
+    }
+}
+
+
+Enable-PSSessionConfiguration 
+$session_count = 0
+
+#Start checking the remote hosts for ioc
+
+Write-Host "Start checking the remote hosts for ioc... " -ForegroundColor Green
+Write-Host $break
+
+foreach ($ps_ip in $active_ps_host) {
+    $session = New-PSSession $ps_ip -ErrorAction SilentlyContinue
+    $session_count++
+}
+
+
+$invoke_count = 0
+
+#Important to have the variable below
+$session=Get-PSSession | Sort
+
+while($invoke_count -lt $session_count) {
+
+    Write-Host ""
+    Write-Host "Startup folder Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach ($ioc in $file_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock {gci -Path "C:\Users\DCI Student\Start Menu\Programs\Startup\" -Force -Include $using:ioc -Recurse | Select Fullname}}
+
+    Write-Host ""
+    Write-Host "TempFile Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach ($ioc in $file_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock {gci -Path $env:TEMP -Force -Include $using:ioc -Recurse | Select Fullname}}
+
+    Write-Host ""
+    Write-Host "ProgramFiles Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach ($ioc in $file_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock {gci -Path $env:ProgramFiles -Force -Include $using:ioc -Recurse | Select Fullname}}
+    Write-Host ""
+    Write-Host "LOCAL APP DATA Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach ($ioc in $file_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock {gci -Path $env:LOCALAPPDATA -Include $using:ioc  -Recurse | Select Fullname}}
+
+    Write-Host ""
+    Write-Host "HKEY_CURRENT_USER registry Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach($reg in $reg_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock { Get-ItemProperty -Path Registry::HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run -Name $using:reg -ErrorAction SilentlyContinue | Format-Table *}}
+    Write-Host ""
+    Write-Host "HKLM registry Scan:" $session[$invoke_count].ComputerName
+    Write-Host "--------------------------------"
+    foreach($reg in $reg_ioc) {Invoke-Command -ComputerName $session[$invoke_count].ComputerName -ScriptBlock { Get-ItemProperty -Path Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run -Name $using:reg -ErrorAction SilentlyContinue | Format-Table * }}
+$invoke_count++
+}
+
+Write-Host "Total time to scan whole subnet ..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$elapsedTime = $(get-date) - $StartTime
+
+$totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)
+$totalTime

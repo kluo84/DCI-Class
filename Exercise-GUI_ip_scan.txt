@@ -1,0 +1,287 @@
+﻿ function Get-IPrange
+{
+<# 
+  .SYNOPSIS  
+    Get the IP addresses in a range 
+  .EXAMPLE 
+   Get-IPrange -start 192.168.8.2 -end 192.168.8.20 
+  .EXAMPLE 
+   Get-IPrange -ip 192.168.8.2 -mask 255.255.255.0 
+  .EXAMPLE 
+   Get-IPrange -ip 192.168.8.3 -cidr 24 
+#> 
+ 
+param 
+( 
+  [string]$start, 
+  [string]$end, 
+  [string]$ip, 
+  [string]$mask, 
+  [int]$cidr 
+) 
+ 
+function IP-toINT64 () { 
+  param ($ip) 
+ 
+  $octets = $ip.split(".") 
+  return [int64]([int64]$octets[0]*16777216 +[int64]$octets[1]*65536 +[int64]$octets[2]*256 +[int64]$octets[3]) 
+} 
+ 
+function INT64-toIP() { 
+  param ([int64]$int) 
+
+  return (([math]::truncate($int/16777216)).tostring()+"."+([math]::truncate(($int%16777216)/65536)).tostring()+"."+([math]::truncate(($int%65536)/256)).tostring()+"."+([math]::truncate($int%256)).tostring() )
+} 
+ 
+if ($ip) {$ipaddr = [Net.IPAddress]::Parse($ip)} 
+if ($cidr) {$maskaddr = [Net.IPAddress]::Parse((INT64-toIP -int ([convert]::ToInt64(("1"*$cidr+"0"*(32-$cidr)),2)))) } 
+if ($mask) {$maskaddr = [Net.IPAddress]::Parse($mask)} 
+if ($ip) {$networkaddr = new-object net.ipaddress ($maskaddr.address -band $ipaddr.address)} 
+if ($ip) {$broadcastaddr = new-object net.ipaddress (([system.net.ipaddress]::parse("255.255.255.255").address -bxor $maskaddr.address -bor $networkaddr.address))} 
+ 
+if ($ip) { 
+  $startaddr = IP-toINT64 -ip $networkaddr.ipaddresstostring 
+  $endaddr = IP-toINT64 -ip $broadcastaddr.ipaddresstostring 
+} else { 
+  $startaddr = IP-toINT64 -ip $start 
+  $endaddr = IP-toINT64 -ip $end 
+} 
+ 
+ 
+for ($i = $startaddr; $i -le $endaddr; $i++) 
+{ 
+  INT64-toIP -int $i 
+}
+
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+<#Function StartProgressBar
+{
+	if($i -le 5){
+	    $pbrTest.Value = $i
+	    $script:i += 1
+	}
+	else {
+		$timer.enabled = $false
+	}
+	
+}#>
+$x=0
+$y=0
+$env:HostIP =(
+    Get-NetIPConfiguration |
+    Where-Object{
+        $_.IPv4DefaultGateway -ne $null -and
+        $_.NetAdapter.Status -ne "Disconnected"
+    }
+).IPv4Address.IPAddress
+$form2 = New-Object System.Windows.Forms.Form
+$form2.Text = 'Show me waht u got'
+$form2.Size = New-Object System.Drawing.Size(300,200)
+$form2.StartPosition = 'CenterScreen'
+
+$OKButton = New-Object System.Windows.Forms.Button
+$OKButton.Location = New-Object System.Drawing.Point(75,120)
+$OKButton.Size = New-Object System.Drawing.Size(75,23)
+$OKButton.Text = 'SEND ITTTT'
+$OKButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form2.AcceptButton = $OKButton
+$form2.Controls.Add($OKButton)
+
+$CancelButton = New-Object System.Windows.Forms.Button
+$CancelButton.Location = New-Object System.Drawing.Point(150,120)
+$CancelButton.Size = New-Object System.Drawing.Size(75,23)
+$CancelButton.Text = 'Cancel'
+$CancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$form2.CancelButton = $CancelButton
+$form2.Controls.Add($CancelButton)
+
+$f2label = New-Object System.Windows.Forms.Label
+$f2label.Location = New-Object System.Drawing.Point(10,20)
+$f2label.Size = New-Object System.Drawing.Size(280,20)
+$f2label.Text = 'Enter the first IP of your range'
+$form2.Controls.Add($f2label)
+
+$textBox = New-Object System.Windows.Forms.TextBox
+$textBox.Location = New-Object System.Drawing.Point(10,40)
+$textBox.Size = New-Object System.Drawing.Size(260,20)
+$form2.Controls.Add($textBox)
+
+$f2label2 = New-Object System.Windows.Forms.Label
+$f2label2.Location = New-Object System.Drawing.Point(10,60)
+$f2label2.Size = New-Object System.Drawing.Size(280,20)
+$f2label2.Text = 'Enter the Last ip in your range or the cidr #'
+$form2.Controls.Add($f2label2)
+
+$textBox2 = New-Object System.Windows.Forms.TextBox
+$textBox2.Location = New-Object System.Drawing.Point(10,80)
+$textBox2.Size = New-Object System.Drawing.Size(260,20)
+$form2.Controls.Add($textBox2)
+$form2.Topmost = $true
+
+$form2.Add_Shown({$textBox2.Select()})
+$form2.Add_Shown({$textBox.Select()})
+$result = $form2.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK)
+{
+    $y = $textBox.Text
+    $x = $textBox2.Text
+}
+
+
+if($x -In 1..32){
+    $targets = Get-IPrange -ip $y -cidr $x
+    }
+    else{
+    $targets = Get-IPrange -start $y -end $x
+    }
+$targets = $targets | findstr /v $env:HostIP
+$targint = $targets | measure
+$targint = $targint.Count
+$aliveint=0
+$Form = New-Object System.Windows.Forms.Form
+$Form.width = 400
+$Form.height = 600
+$Form.Text = "Ping all them shits"
+$Form.StartPosition = 'CenterScreen'
+
+# Init ProgressBar
+$pbrTest = New-Object System.Windows.Forms.ProgressBar
+$pbrTest.Maximum = $targint
+$pbrTest.Minimum = 0
+$pbrTest.Location = new-object System.Drawing.Size(30,10)
+$pbrTest.size = new-object System.Drawing.Size(300,50)
+$i = 0
+$Form.Controls.Add($pbrTest)
+
+<#$wsmanTest = New-Object System.Windows.Forms.ProgressBar
+$wsmanTest.Maximum = $aliveint
+$wsmanTest.Minimum = 0
+$wsmanTest.Location = new-object System.Drawing.Size(30,150)
+$wsmanTest.size = new-object System.Drawing.Size(300,50)
+$w = 0
+$Form.Controls.Add($wsmanTest)
+#>
+# Button
+$btnConfirm = new-object System.Windows.Forms.Button
+$btnConfirm.Location = new-object System.Drawing.Size(120,90)
+$btnConfirm.Size = new-object System.Drawing.Size(100,40)
+$btnConfirm.Text = "Scan Them Bitches"
+$Form.Controls.Add($btnConfirm)
+
+$btn4Confirm = new-object System.Windows.Forms.Button
+$btn4Confirm.Location = new-object System.Drawing.Size(120,220)
+$btn4Confirm.Size = new-object System.Drawing.Size(100,40)
+$btn4Confirm.Text = "Let's check that WSMAN"
+$Form.Controls.Add($btn4Confirm)
+
+
+# Button
+$btn2Confirm = new-object System.Windows.Forms.Button
+$btn2Confirm.Location = new-object System.Drawing.Size(60,500)
+$btn2Confirm.Size = new-object System.Drawing.Size(100,40)
+$btn2Confirm.Text = "GTFO"
+$Form.Controls.Add($btn2Confirm)
+$btn2Confirm.DialogResult=[System.Windows.Forms.DialogResult]::Cancel
+
+$btn3Confirm = new-object System.Windows.Forms.Button
+$btn3Confirm.Location = new-object System.Drawing.Size(200,500)
+$btn3Confirm.Size = new-object System.Drawing.Size(100,40)
+$btn3Confirm.Text = "And then?"
+$Form.Controls.Add($btn3Confirm)
+$btn3Confirm.DialogResult=[System.Windows.Forms.DialogResult]::YES
+
+$pingable = New-Object 'System.Collections.Generic.List[System.Object]'
+$ps_alive = New-Object 'System.Collections.Generic.List[System.Object]'
+
+$label = New-Object System.Windows.Forms.Label
+$label.Location = New-Object System.Drawing.Point(30,70)
+$label.Size = New-Object System.Drawing.Size(280,40)
+$label.Text = "The targets list has $targint entries would you like to ping them now?"
+$form.Controls.Add($label)
+
+$label2 = New-Object System.Windows.Forms.Label
+$label2.Location = New-Object System.Drawing.Point(30,200)
+$label2.Size = New-Object System.Drawing.Size(280,80)
+$label2.Text = "WE AINT FOUND SHIT YET SCAN THEM SHITS"
+$form.Controls.Add($label2)
+
+$label3 = New-Object System.Windows.Forms.Label
+$label3.Location = New-Object System.Drawing.Point(30,280)
+$label3.Size = New-Object System.Drawing.Size(100,150)
+$label3.Text = "Pingable IP's`n"
+$form.Controls.Add($label3)
+
+$label4 = New-Object System.Windows.Forms.Label
+$label4.Location = New-Object System.Drawing.Point(170,280)
+$label4.Size = New-Object System.Drawing.Size(100,150)
+$label4.Text = "WSMan IP's`n"
+$form.Controls.Add($label4)
+
+$label5 = New-Object System.Windows.Forms.Label
+$label5.Location = New-Object System.Drawing.Point(120,450)
+$label5.Size = New-Object System.Drawing.Size(200,400)
+$label5.Text = ""
+$form.Controls.Add($label5)
+<#$timer = New-Object System.Windows.Forms.Timer 
+$timer.Interval = 1000
+
+$timer.add_Tick({
+StartProgressBar
+})
+
+$timer.Enabled = $true
+$timer.Start()
+#>
+# Button Click Event to Run ProgressBar
+$btnConfirm.Add_Click({
+    $i=1
+    $targets | foreach{
+        $pbrTest.Value=$i   
+        $i ++
+        if(ping -n 1 -w 1 $_ | findstr Reply)
+            {
+            $aliveint ++
+            $label2.Text = "$aliveint Machines said WASSUP Would you like to test WSMan on them?"
+            $label3.Text +="$_`n"
+            $pingable.Add($_)
+            $wsmanTest.Maximum = $aliveint
+            }
+        }
+   
+ <#   While ($i -le 100) {
+        $pbrTest.Value = $i
+        Start-Sleep -m 1
+        "VALLUE EQ"
+        $i
+        $i += 1
+    }#>
+    })
+$btn4Confirm.Add_Click({
+$label5.Text="Scanning for WSMan"
+Start-Sleep -m 1
+    $w=1
+$pingable | foreach{
+#    $wsmanTest.Value=$w
+#    $w++
+    Start-Sleep -m 1
+    if(Test-NetConnection $_ -p 5985 -i Quiet -wa SilentlyContinue){
+#   if(Test-WSMan $_ -ErrorAction SilentlyContinue){       
+        $label4.Text+="$_`n"
+        $ps_alive.Add($_)
+        $label5.Text = "Found $($ps_alive.Count) Machines" 
+        }
+        else{}
+    }
+ }) 
+
+# Show Form
+$Form.Add_Shown({$Form.Activate()})
+$result=$form.ShowDialog()
+
+#if($result -eq [System.Windows.Forms.DialogResult]::Yes){
+#    $label3.Text
+#    }
