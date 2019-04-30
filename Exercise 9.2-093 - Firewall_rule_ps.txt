@@ -1,0 +1,86 @@
+cd $env:TEMP
+$break = "================================================================================================="
+
+$StartTime = $(get-date)
+#Set-ExecutionPolicy -ExecutionPolicy Unrestricted
+Write-Host "Close all Active PSSession ..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+Get-PSSession | Remove-PSSession 
+
+#initiate internal counter (trcount)
+$trcount = 0
+
+
+#active host scan
+$active_host = @('10.10.10.10' ,'10.10.10.11','10.10.10.12') 
+
+
+
+#powershell remote management port
+Write-Host "Scanning for remote PS on active hosts..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+
+
+$active_ps_host = New-Object 'System.Collections.Generic.List[System.Object]'
+Enable-PSSessionConfiguration
+
+ForEach ($ip in $active_host){
+    if ((Test-WSMan $ip -ErrorAction SilentlyContinue)) {
+        Set-Item WSMan:\localhost\Client\TrustedHosts * -Force -Concatenate
+        $active_ps_host.add($ip)       
+    }
+}
+#Active remote powershell
+Write-Host "Active remote PS hosts..." -ForegroundColor Green
+$active_ps_host
+Write-Host $break -ForegroundColor Green
+
+
+$session_count = 0
+
+
+#login to remote ip
+$PWord = ConvertTo-SecureString -AsPlainText -Force -String P@ssw0rd 
+$Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "dci student",$PWord 
+
+foreach ($ps_ip in $active_ps_host) {
+    $session = New-PSSession $ps_ip -ErrorAction SilentlyContinue -Credential $Credential
+    $session_count++
+}
+
+
+$invoke_count = 0
+$session = Get-PSSession | Sort
+
+while($invoke_count -lt $session_count) {
+ 
+
+    #Mutant check
+    Write-Host ""
+    Write-Host "Firewall rules setting up:" $session[$invoke_count].ComputerName
+    Write-Host $single_break
+   
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow RPC in" -Direction Inbound -LocalPort 135 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow netbios-ssn in" -Direction Inbound -LocalPort 139 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow microsoft-ds in" -Direction Inbound -LocalPort 445 -Protocol TCP -Action Allow}
+
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow RPC out" -Direction Outbound -LocalPort 135 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow netbios-ssn out" -Direction Outbound -LocalPort 139 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow microsoft-ds out" -Direction Outbound -LocalPort 445 -Protocol TCP -Action Allow}
+
+    #AWS rules
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow ssl in" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow ssl out" -Direction Outbound -LocalPort 3389 -Protocol TCP -Action Allow}
+
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow sslUdp in" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow}
+    Invoke-Command -ComputerName $session[$invoke_count].ComputerName -Credential $Credential -ScriptBlock {New-NetFirewallRule -DisplayName "Allow sslUdp out" -Direction Outbound -LocalPort 3389 -Protocol TCP -Action Allow}
+
+$invoke_count++
+}
+
+Write-Host "Total time to scan..." -ForegroundColor Green
+Write-Host $break -ForegroundColor Green
+$elapsedTime = $(get-date) - $StartTime
+
+$totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)
+$totalTime
